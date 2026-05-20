@@ -768,3 +768,17 @@ FodyWeavers.xsd
 # Additional files built by Visual Studio
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudio,visualstudiocode,c++,python,jetbrains+all,ros,ros2
+
+# ─── rbnx vendor patch ────────────────────────────────────────────
+# Force-include the prebuilt OrbbecSDK binary blobs shipped under
+# orbbec_camera/SDK/lib/{x64,arm32,arm64}/. These are vendor-shipped
+# .so libraries (depth engine, USB driver, live555, OrbbecSDK itself)
+# that the build links against via `-L<src>/SDK/lib/<arch> -lOrbbecSDK`
+# (see orbbec_camera/CMakeLists.txt:81-82,114). The upstream `*.so`
+# rule above (which is meant for build-time outputs) was incorrectly
+# eating these too, including unversioned `libOrbbecSDK.so` symlinks
+# that ld -lOrbbecSDK resolves through. Without these unignores the
+# package builds locally (because the working tree has the files)
+# but FAILS to link on a fresh clone with `cannot find -lOrbbecSDK`.
+!orbbec_camera/SDK/
+!orbbec_camera/SDK/**
