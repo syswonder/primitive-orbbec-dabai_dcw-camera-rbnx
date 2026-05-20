@@ -1,0 +1,74 @@
+# Orbbec Dabai DCW RGBD camera primitive (Stage 1 of grasp pipeline migration).
+#
+# Wraps the upstream `orbbec_camera` ROS 2 driver (vendored under
+# src/OrbbecSDK_ROS2) and atlas-routes the streams it produces under
+# the generic `primitive/camera/*` contracts so consumers (yolo_world,
+# yolo_grasp, scene, any vision skill) can resolve topic names through
+# atlas instead of hardcoding `/camera/color/image_raw` etc.
+#
+# Lifecycle (Robonix developer guide §5):
+#   CMD_INIT     -> on_init: light cfg validation, derive topic names.
+#   CMD_ACTIVATE -> on_activate: spawn dabai_dcw.launch.py, wait for
+#                   first RGB frame, atlas-declare rgb + depth +
+#                   camera_info ROS 2 topics.
+#   CMD_DEACTIVATE / CMD_SHUTDOWN -> kill orbbec subprocess (idempotent).
+#
+# Capability surface (mode = abstract pattern, transport = wire):
+#   primitive/camera/driver        mode=rpc        transport=gRPC  (auto-declared by framework)
+#   primitive/camera/rgb           mode=topic_out  transport=ROS2  sensor_msgs/Image
+#   primitive/camera/depth         mode=topic_out  transport=ROS2  sensor_msgs/Image (depth_registration: aligned to RGB frame)
+#   primitive/camera/camera_info   mode=topic_out  transport=ROS2  sensor_msgs/CameraInfo (color stream intrinsics; needed by yolo_grasp's depth back-projection)
+#
+# Why camera_info is added (vs realsense_camera_rbnx which omits it):
+# the grasp pipeline's yolo_grasp node back-projects 2D bbox centers
+# into 3D using the color CameraInfo (fx/fy/cx/cy + distortion). Without
+# atlas-routed camera_info, yolo_grasp would have to hardcode
+# `/camera/color/camera_info` — exactly the kind of name-coupling
+# atlas routing is meant to break.
+#
+# `camera_info` contract is defined LOCALLY at
+# `capabilities/primitive/camera/camera_info.v1.toml` because the
+# robonix global tree doesn't ship one yet. codegen + atlas merge
+# package-level contracts automatically (see PACKAGE_DEV_GUIDE.md §3
+# "Let your contract live in the global capabilities tree").
+#
+# Aspirational contracts (extrinsics, snapshot, depth_snapshot) are
+# intentionally NOT listed — per the new packaging rules, manifest
+# entries must correspond to real declare_ros2_*/@cap.mcp handlers,
+# otherwise consumers see capabilities that resolve to nothing.
+#
+# Config (passed via `Driver(CMD_INIT, config_json)`):
+#   camera_name         default "camera"   — ROS namespace, prefix of all topics
+#   depth_registration  default true       — depth pre-aligned to color frame (HW)
+#   enable_d2c_viewer   default false      — debug RViz; off in headless deploy
+#   color_width         default 640
+#   color_height        default 480
+#   color_fps           default 10         — dabai_dcw firmware default; see launch
+#   depth_width         default 640
+#   depth_height        default 400
+#   depth_fps           default 10
+#   serial_number       default ""         — pin to specific device when multiple are connected
+#   usb_port            default ""
+#   sentinel_timeout_s  default 30.0
+#
+# Topic-name overrides (rarely needed, derive from camera_name otherwise):
+#   rgb_topic           default "/<camera_name>/color/image_raw"
+#   depth_topic         default "/<camera_name>/depth/image_raw"
+#   camera_info_topic   default "/<camera_name>/color/camera_info"
+manifestVersion: 1
+
+package:
+  name: com.robonix.piper_grasp.orbbec_camera
+  version: 0.1.0
+  vendor: robonix
+  description: Orbbec Dabai DCW RGBD primitive — declares rgb + depth + camera_info.
+  license: Apache-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/primitive/camera/driver
+  - name: robonix/primitive/camera/rgb
+  - name: robonix/primitive/camera/depth
+  - name: robonix/primitive/camera/camera_info
