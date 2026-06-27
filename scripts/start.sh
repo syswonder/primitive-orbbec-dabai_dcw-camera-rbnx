@@ -24,14 +24,47 @@ echo "[orbbec_camera/start] setup.bash exists? $(test -f "$PKG/rbnx-build/ws/ins
 ROS_DISTRO="${ROS_DISTRO:-humble}"
 # shellcheck disable=SC1091
 set +u; source "/opt/ros/${ROS_DISTRO}/setup.bash"; set -u
-if [[ -f "$PKG/rbnx-build/ws/install/setup.bash" ]]; then
-    # shellcheck disable=SC1091
-    set +u; source "$PKG/rbnx-build/ws/install/setup.bash"; set -u
-else
+if [[ ! -f "$PKG/rbnx-build/ws/install/setup.bash" ]]; then
     echo "[orbbec_camera/start] FATAL: rbnx-build/ws/install/setup.bash missing" >&2
     echo "[orbbec_camera/start]        Run \`bash scripts/build.sh\` first." >&2
     exit 2
 fi
+# Verify the actual subpackages exist in install/ — colcon's setup.bash
+# records absolute build-time paths to per-package local_setup.bash and
+# silently warns 'not found' if those subdirs are missing (e.g. partial
+# rsync, or scripts/ was copied to a runtime cache without rbnx-build/).
+# Make that failure explicit and fatal.
+for sub in orbbec_camera_msgs orbbec_camera orbbec_description; do
+    if [[ ! -f "$PKG/rbnx-build/ws/install/$sub/share/$sub/local_setup.bash" ]]; then
+        echo "[orbbec_camera/start] FATAL: missing install for ROS package '$sub'" >&2
+        echo "[orbbec_camera/start]        Expected: $PKG/rbnx-build/ws/install/$sub/share/$sub/local_setup.bash" >&2
+        echo "[orbbec_camera/start]        rbnx-build/ exists but is incomplete — most likely you" >&2
+        echo "[orbbec_camera/start]        rsynced source-only and skipped the build artifacts, OR" >&2
+        echo "[orbbec_camera/start]        build.sh failed half-way. Re-run \`bash scripts/build.sh\`" >&2
+        echo "[orbbec_camera/start]        in a CLEAN shell (unset COLCON_PREFIX_PATH AMENT_PREFIX_PATH)." >&2
+        exit 2
+    fi
+done
+
+# Also scrub COLCON_PREFIX_PATH of obviously-stale entries (paths that
+# don't exist on this host) before sourcing — otherwise the inner
+# colcon setup.bash will spam 'not found' warnings that look like our
+# bug. We keep entries that exist on disk.
+if [[ -n "${COLCON_PREFIX_PATH:-}" ]]; then
+    clean_cpp=""
+    IFS=':' read -ra _cpp_parts <<< "$COLCON_PREFIX_PATH"
+    for p in "${_cpp_parts[@]}"; do
+        if [[ -n "$p" && -d "$p" ]]; then
+            clean_cpp="${clean_cpp:+$clean_cpp:}$p"
+        else
+            echo "[orbbec_camera/start] scrubbing dead COLCON_PREFIX_PATH entry: $p" >&2
+        fi
+    done
+    export COLCON_PREFIX_PATH="$clean_cpp"
+fi
+
+# shellcheck disable=SC1091
+set +u; source "$PKG/rbnx-build/ws/install/setup.bash"; set -u
 
 echo "[orbbec_camera/start] post-source: ros2 pkg prefix orbbec_camera => $(ros2 pkg prefix orbbec_camera 2>&1 || echo MISSING)" >&2
 
