@@ -58,7 +58,7 @@
 manifestVersion: 1
 
 package:
-  name: com.robonix.piper_grasp.orbbec_camera
+  name: robonix.primitive.orbbec.dabai_dcw.camera
   version: 0.1.0
   vendor: robonix
   description: Orbbec Dabai DCW RGBD primitive — declares rgb + depth + camera_info.

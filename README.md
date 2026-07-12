@@ -1,62 +1,45 @@
-# OrbbecSDK_rbnx
+# primitive-orbbec-dabai_dcw-camera-rbnx
 
-Robonix package wrapping the **Orbbec Dabai DCW** RGBD camera. Owns
-the `primitive/camera/*` namespace for the `piper_grasp` deploy.
-Exposes the camera's RGB + depth + camera_info streams under generic
-contracts so consumers (yolo_world, yolo_grasp, scene, any vision
-skill) resolve topic names through atlas — no hardcoded
-`/camera/color/image_raw` paths on the consumer side.
+Robonix package wrapping the **Orbbec Dabai DCW** RGBD camera. Owns the `primitive/camera/*` namespace. Exposes the camera's RGB + depth + camera_info streams under generic contracts so consumers (grasp / detection / scene / vision skills) resolve topic names through atlas — no hardcoded `/camera/color/image_raw` paths on the consumer side.
 
-## Boot ordering
-
-This is the **camera primitive** for the piper_grasp deploy. Boot it
-**before** any consumer of `primitive/camera/*` — Stage 4's
-`yolo_world_rbnx` and `yolo_grasp_rbnx` will both query atlas at
-their own `Driver(CMD_INIT)` time and fail if rgb / depth /
-camera_info aren't declared yet (rbnx-cli has no defer/retry).
+Catalog name: `robonix.primitive.orbbec.dabai_dcw.camera`.
 
 ## Capability surface
 
-| Contract                                  | Mode      | Transport | Source / handler                                 |
-| ----------------------------------------- | --------- | --------- | ------------------------------------------------ |
-| `robonix/primitive/camera/driver`         | rpc       | gRPC      | `Driver(CMD_INIT, config_json)` — lifecycle gate |
-| `robonix/primitive/camera/rgb`            | topic_out | ROS 2     | `/<cam>/color/image_raw` (sensor_msgs/Image)     |
-| `robonix/primitive/camera/depth`          | topic_out | ROS 2     | `/<cam>/depth/image_raw` (HW-aligned to color when `depth_registration=true`) |
-| `robonix/primitive/camera/camera_info`    | topic_out | ROS 2     | `/<cam>/color/camera_info` (sensor_msgs/CameraInfo) |
+| Contract                                | Mode       | Transport | Source / handler                                            |
+| --------------------------------------- | ---------- | --------- | ----------------------------------------------------------- |
+| `robonix/primitive/camera/driver`       | rpc        | gRPC      | `Driver(CMD_INIT, config_json)` — lifecycle gate            |
+| `robonix/primitive/camera/rgb`          | topic_out  | ROS 2     | `/<camera_name>/color/image_raw` (sensor_msgs/Image)        |
+| `robonix/primitive/camera/depth`        | topic_out  | ROS 2     | `/<camera_name>/depth/image_raw` (sensor_msgs/Image; HW-aligned to color when `depth_registration=true`) |
+| `robonix/primitive/camera/camera_info`  | topic_out  | ROS 2     | `/<camera_name>/color/camera_info` (sensor_msgs/CameraInfo) |
 
-`camera_info` is **package-locally defined** (see
-`capabilities/primitive/camera/camera_info.v1.toml`) because the
-robonix global tree doesn't ship that contract; codegen + atlas merge
-package-level capabilities automatically. It exists because Stage 4B's
-`yolo_grasp_rbnx` does depth back-projection and needs fx/fy/cx/cy +
-distortion.
+`camera_info` is **package-locally defined** (see `capabilities/primitive/camera/camera_info.v1.toml`) because the robonix global tree does not ship that contract yet; codegen + atlas merge package-level capabilities automatically. It is required by the grasp pipeline: `service-grasp-pose-rbnx` back-projects 2D bbox centers into 3D using `fx / fy / cx / cy` + distortion.
 
-Aspirational contracts (`extrinsics`, `snapshot`, `depth_snapshot`)
-listed in the global `capabilities/primitive/camera/` are
-intentionally **not** declared here — per the new packaging rules,
-manifest entries must correspond to real
-`declare_ros2_*/@cap.mcp(...)` handlers.
+Aspirational contracts (`extrinsics`, `snapshot`, `depth_snapshot`) listed in the global `capabilities/primitive/camera/` are intentionally **not** declared here — per the packaging rules, manifest entries must correspond to real `declare_ros2_*/@cap.mcp(...)` handlers.
+
+## Boot ordering
+
+Boot this **before** any consumer of `primitive/camera/*`. In the vertical-grasp pipeline `service-object-detect-rbnx` and `service-grasp-pose-rbnx` both query atlas at their own `Driver(CMD_INIT)` time and fail if `rgb / depth / camera_info` are not declared yet — rbnx-cli has no defer/retry.
 
 ## Driver-init lifecycle
 
-`start.sh` brings up the atlas bridge (Python). The bridge registers
-the provider, declares only `primitive/camera/driver` (auto-emitted
-by the framework when codegen produces a `Driver` Servicer), then
-blocks on `Driver(CMD_INIT, config_json)`.
+`start.sh` brings up the atlas bridge — no ROS spawn. The bridge opens a gRPC server, registers the provider, declares only `primitive/camera/driver` (auto-emitted by the framework when codegen produces a `Driver` Servicer), then blocks on `Driver(CMD_INIT, config_json)`.
 
-When `rbnx boot` invokes Init it passes the manifest's `config:`
-block as JSON. The handler parses cfg (camera name, resolution / FPS,
-`depth_registration`, USB pin), spawns
-`ros2 launch orbbec_camera dabai_dcw.launch.py …`, waits for the first
-frame on the configured RGB topic, declares
-`primitive/camera/{rgb, depth, camera_info}` on atlas, and returns
-ok. Atlas only ever advertises endpoints we've confirmed are
-publishing.
+When `rbnx boot` invokes Init it passes the manifest's `config:` block as JSON. The handler:
+
+1. parses cfg (camera name, resolution / fps, `depth_registration`, USB pin, sentinel timeout);
+2. spawns `ros2 launch orbbec_camera dabai_dcw.launch.py …`;
+3. waits for the first `sensor_msgs/Image` on the configured RGB topic (sentinel);
+4. declares `primitive/camera/{rgb, depth, camera_info}` on atlas, and returns ok.
+
+Atlas only ever advertises endpoints we've confirmed are publishing. `CMD_DEACTIVATE` / `CMD_SHUTDOWN` kill the orbbec subprocess. Idempotent.
+
+If the camera is not connected or the driver stalls, the sentinel times out and Init returns `state="error"`.
 
 ## Layout
 
 ```
-OrbbecSDK_rbnx/
+primitive-orbbec-dabai_dcw-camera-rbnx/
 ├── package_manifest.yaml
 ├── capabilities/
 │   └── primitive/camera/camera_info.v1.toml   # package-local contract
@@ -102,35 +85,24 @@ ROBONIX_ATLAS=127.0.0.1:50051 \
     bash scripts/start.sh                       # registers, awaits Init
 ```
 
-To drive Init manually (without `rbnx boot`): from any robonix gRPC
-client, call the camera's `Driver` service with `command=0` (CMD_INIT)
-and `config_json='{}'`. The handler returns `ok=true` after the first
-RGB frame is observed, then declares the three topic_out streams.
+To drive Init manually (without `rbnx boot`): from any robonix gRPC client, call the camera's `Driver` service with `command=0` (CMD_INIT) and `config_json='{}'`. The handler returns `ok=true` after the first RGB frame is observed, then declares the three topic_out streams.
 
-## Verification (Stage 1 deliverable)
-
-After `rbnx boot` from `piper_grasp_deploy/`:
+## Verification
 
 ```bash
 rbnx caps | grep camera
 # Expected: orbbec_camera provider with
 #   robonix/primitive/camera/{driver, rgb, depth, camera_info}
 
-ros2 topic hz /camera/color/image_raw          # ~10 Hz with default fps
-ros2 topic hz /camera/depth/image_raw          # ~10 Hz
+ros2 topic hz /camera/color/image_raw           # ~10 Hz with default fps
+ros2 topic hz /camera/depth/image_raw           # ~10 Hz
 ros2 topic echo /camera/color/camera_info --once  # K, D, R, P intrinsics
 ```
 
 ## Vendor / upstream
 
-`src/OrbbecSDK_ROS2/` is a verbatim copy of
-[orbbec/OrbbecSDK_ROS2](https://github.com/orbbec/OrbbecSDK_ROS2) at
-the version that worked on the Jetson with the original
-`/Users/howenliu/lab/grasp/driver/OrbbecSDK_ROS2` layout. The Dabai
-DCW firmware-blob SDK ships under
-`orbbec_camera/SDK/{include,lib}/`. If anything diverges from
-upstream, drop a `*.patch` alongside `src/` documenting the diff.
+`src/OrbbecSDK_ROS2/` is a verbatim copy of [orbbec/OrbbecSDK_ROS2](https://github.com/orbbec/OrbbecSDK_ROS2). The Dabai DCW firmware-blob SDK ships under `orbbec_camera/SDK/{include,lib}/`. If anything diverges from upstream, drop a `*.patch` alongside `src/` documenting the diff.
 
 ## License
 
-This package: Apache-2.0 (matches OrbbecSDK_ROS2 upstream).
+This package: Apache-2.0. Vendored OrbbecSDK_ROS2: see its LICENSE file.
