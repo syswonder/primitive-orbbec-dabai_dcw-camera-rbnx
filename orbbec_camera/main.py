@@ -107,6 +107,7 @@ def _spawn_orbbec(cfg: dict) -> None:
         f"color_width:={int(cfg.get('color_width', 640))}",
         f"color_height:={int(cfg.get('color_height', 480))}",
         f"color_fps:={int(cfg.get('color_fps', 10))}",
+        f"color_format:={str(cfg.get('color_format', 'MJPG'))}",
         f"depth_width:={int(cfg.get('depth_width', 640))}",
         f"depth_height:={int(cfg.get('depth_height', 400))}",
         f"depth_fps:={int(cfg.get('depth_fps', 10))}",
