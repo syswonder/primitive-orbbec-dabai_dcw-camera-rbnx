@@ -2,8 +2,8 @@
 #
 # Wraps the upstream `orbbec_camera` ROS 2 driver (vendored under
 # src/OrbbecSDK_ROS2) and atlas-routes the streams it produces under
-# the generic `primitive/camera/*` contracts so consumers (yolo_world,
-# yolo_grasp, scene, any vision skill) can resolve topic names through
+# the generic `primitive/camera/*` contracts so consumers (object detection,
+# grasp, scene, and other vision packages) can resolve topic names through
 # atlas instead of hardcoding `/camera/color/image_raw` etc.
 #
 # Lifecycle (Robonix developer guide §5):
@@ -17,14 +17,13 @@
 #   primitive/camera/driver        mode=rpc        transport=gRPC  (auto-declared by framework)
 #   primitive/camera/rgb           mode=topic_out  transport=ROS2  sensor_msgs/Image
 #   primitive/camera/depth         mode=topic_out  transport=ROS2  sensor_msgs/Image (depth_registration: aligned to RGB frame)
-#   primitive/camera/camera_info   mode=topic_out  transport=ROS2  sensor_msgs/CameraInfo (color stream intrinsics; needed by yolo_grasp's depth back-projection)
+#   primitive/camera/camera_info   mode=topic_out  transport=ROS2  sensor_msgs/CameraInfo (color stream intrinsics)
 #
 # Why camera_info is added (vs realsense_camera_rbnx which omits it):
-# the grasp pipeline's yolo_grasp node back-projects 2D bbox centers
-# into 3D using the color CameraInfo (fx/fy/cx/cy + distortion). Without
-# atlas-routed camera_info, yolo_grasp would have to hardcode
-# `/camera/color/camera_info` — exactly the kind of name-coupling
-# atlas routing is meant to break.
+# object_detect synchronizes CameraInfo with RGB and, when depth is enabled,
+# uses its intrinsics for 3D back-projection. Atlas routing avoids hardcoding
+# `/camera/color/camera_info`. The current vertical-grasp deploy skips depth;
+# grasp_pose instead uses a calibrated 2D homography.
 #
 # `camera_info` contract is defined LOCALLY at
 # `capabilities/primitive/camera/camera_info.v1.toml` because the

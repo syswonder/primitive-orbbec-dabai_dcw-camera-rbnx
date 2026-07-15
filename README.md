@@ -13,24 +13,24 @@ Catalog name: `robonix.primitive.orbbec.dabai_dcw.camera`.
 | `robonix/primitive/camera/depth`        | topic_out  | ROS 2     | `/<camera_name>/depth/image_raw` (sensor_msgs/Image; HW-aligned to color when `depth_registration=true`) |
 | `robonix/primitive/camera/camera_info`  | topic_out  | ROS 2     | `/<camera_name>/color/camera_info` (sensor_msgs/CameraInfo) |
 
-`camera_info` is **package-locally defined** (see `capabilities/primitive/camera/camera_info.v1.toml`) because the robonix global tree does not ship that contract yet; codegen + atlas merge package-level capabilities automatically. It is required by the grasp pipeline: `service-grasp-pose-rbnx` back-projects 2D bbox centers into 3D using `fx / fy / cx / cy` + distortion.
+`camera_info` is **package-locally defined** (see `capabilities/primitive/camera/camera_info.v1.toml`) because the robonix global tree does not ship that contract yet; codegen + atlas merge package-level capabilities automatically. `service-object-detect-rbnx` uses it to synchronize RGB frames and, when depth is enabled, to back-project detections. The current vertical-grasp deploy skips depth and lets `service-grasp-pose-rbnx` map bbox pixels through a calibrated 2D homography.
 
 Aspirational contracts (`extrinsics`, `snapshot`, `depth_snapshot`) listed in the global `capabilities/primitive/camera/` are intentionally **not** declared here — per the packaging rules, manifest entries must correspond to real `declare_ros2_*/@cap.mcp(...)` handlers.
 
 ## Boot ordering
 
-Boot this **before** any consumer of `primitive/camera/*`. In the vertical-grasp pipeline `service-object-detect-rbnx` and `service-grasp-pose-rbnx` both query atlas at their own `Driver(CMD_INIT)` time and fail if `rgb / depth / camera_info` are not declared yet — rbnx-cli has no defer/retry.
+Boot this **before** any consumer of `primitive/camera/*`. In the current vertical-grasp pipeline, `service-object-detect-rbnx` resolves `rgb` and `camera_info` during its `Driver(CMD_INIT)` call. `service-grasp-pose-rbnx` does not consume camera topics directly; it receives the bbox from detection and uses the deploy's homography.
 
 ## Driver-init lifecycle
 
 `start.sh` brings up the atlas bridge — no ROS spawn. The bridge opens a gRPC server, registers the provider, declares only `primitive/camera/driver` (auto-emitted by the framework when codegen produces a `Driver` Servicer), then blocks on `Driver(CMD_INIT, config_json)`.
 
-When `rbnx boot` invokes Init it passes the manifest's `config:` block as JSON. The handler:
+When `rbnx boot` invokes Init it passes the manifest's `config:` block as JSON. The lifecycle then runs:
 
-1. parses cfg (camera name, resolution / fps, `depth_registration`, USB pin, sentinel timeout);
-2. spawns `ros2 launch orbbec_camera dabai_dcw.launch.py …`;
-3. waits for the first `sensor_msgs/Image` on the configured RGB topic (sentinel);
-4. declares `primitive/camera/{rgb, depth, camera_info}` on atlas, and returns ok.
+1. `CMD_INIT`: parse and validate cfg (camera name, resolution / fps, `depth_registration`, USB pin, sentinel timeout);
+2. `CMD_ACTIVATE`: spawn `ros2 launch orbbec_camera dabai_dcw.launch.py …`;
+3. wait for the first `sensor_msgs/Image` on the configured RGB topic (sentinel);
+4. declare `primitive/camera/{rgb, depth, camera_info}` on atlas.
 
 Atlas only ever advertises endpoints we've confirmed are publishing. `CMD_DEACTIVATE` / `CMD_SHUTDOWN` kill the orbbec subprocess. Idempotent.
 
@@ -85,7 +85,7 @@ ROBONIX_ATLAS=127.0.0.1:50051 \
     bash scripts/start.sh                       # registers, awaits Init
 ```
 
-To drive Init manually (without `rbnx boot`): from any robonix gRPC client, call the camera's `Driver` service with `command=0` (CMD_INIT) and `config_json='{}'`. The handler returns `ok=true` after the first RGB frame is observed, then declares the three topic_out streams.
+To drive the lifecycle manually (without `rbnx boot`), call the camera's `Driver` service with `CMD_INIT` and a config JSON, then call `CMD_ACTIVATE`. Init only validates configuration; Activate returns after the first RGB frame is observed and the three topic streams are declared.
 
 ## Verification
 
