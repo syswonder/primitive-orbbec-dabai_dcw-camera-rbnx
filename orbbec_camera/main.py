@@ -101,11 +101,13 @@ def _spawn_orbbec(cfg: dict) -> None:
     args = [
         "ros2", "launch", "orbbec_camera", "dabai_dcw.launch.py",
         f"camera_name:={cam}",
+        f"enable_depth:={_bool_arg(cfg.get('enable_depth', True))}",
         f"depth_registration:={_bool_arg(cfg.get('depth_registration', True))}",
         f"enable_d2c_viewer:={_bool_arg(cfg.get('enable_d2c_viewer', False))}",
         f"color_width:={int(cfg.get('color_width', 640))}",
         f"color_height:={int(cfg.get('color_height', 480))}",
         f"color_fps:={int(cfg.get('color_fps', 10))}",
+        f"color_format:={str(cfg.get('color_format', 'MJPG'))}",
         f"depth_width:={int(cfg.get('depth_width', 640))}",
         f"depth_height:={int(cfg.get('depth_height', 400))}",
         f"depth_fps:={int(cfg.get('depth_fps', 10))}",

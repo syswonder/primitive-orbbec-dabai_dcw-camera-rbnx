@@ -10,7 +10,7 @@ cd "$PKG"
 # add /opt/ros/humble + our rbnx-build/ws/install/ ourselves below).
 echo "[orbbec_camera/start] PKG=$PKG" >&2
 echo "[orbbec_camera/start] entry AMENT_PREFIX_PATH heads:" >&2
-printf '  %s\n' ${AMENT_PREFIX_PATH//:/ } 2>&1 | head -5 >&2
+printf '  %s\n' ${AMENT_PREFIX_PATH//:/ } 2>&1 | sed -n '1,5p' >&2
 echo "[orbbec_camera/start] entry: ros2 pkg prefix orbbec_camera => $(ros2 pkg prefix orbbec_camera 2>&1 || echo MISSING)" >&2
 echo "[orbbec_camera/start] setup.bash exists? $(test -f "$PKG/rbnx-build/ws/install/setup.bash" && echo YES || echo NO)" >&2
 
