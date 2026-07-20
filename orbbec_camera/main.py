@@ -26,6 +26,24 @@ Lifecycle (per Robonix developer guide §5):
     on_deactivate — symmetric: kill orbbec subprocess.
     on_shutdown   — last-chance kill (idempotent w/ on_deactivate).
 
+Multi-instance support:
+    The atlas `provider_id` is read from the `RBNX_INSTANCE_NAME`
+    environment variable that rbnx-cli sets per-instance (see
+    developer guide §14.1). The same package can therefore be
+    deployed multiple times with different manifest `name`s, e.g.
+    `front_camera` + `arm_camera`, and each instance will register
+    on atlas under its own provider_id without id collisions. When
+    running multiple instances you MUST also give each one a
+    distinct `camera_name` in its `config` block, otherwise the
+    ROS 2 topics themselves (/<camera_name>/color/image_raw, ...)
+    will collide inside the ROS graph — atlas isolation alone won't
+    save you from a ROS-level topic clash.
+
+    When `RBNX_INSTANCE_NAME` is unset (bare `python3 -m
+    orbbec_camera.main` or older rbnx-cli versions), the
+    provider_id falls back to the literal string "orbbec_camera",
+    preserving the previous single-instance behaviour.
+
 Config (from manifest's primitive[].config block, delivered via
 Driver(CMD_INIT, config_json)):
     camera_name         default "camera"
@@ -63,11 +81,23 @@ logging.basicConfig(
 )
 log = logging.getLogger("orbbec")
 
-# Provider id MUST match the deploy manifest's `primitive: - name:`
-# entry for this package (piper_grasp_deploy/robonix_manifest.yaml
-# uses `name: orbbec_camera`).
+# Provider id: read from RBNX_INSTANCE_NAME so the same package can be
+# deployed as multiple instances (e.g. `front_camera` + `arm_camera`)
+# without any code duplication. rbnx-cli injects this env var per
+# instance right before spawning our start.sh (developer guide §14.1
+# — Reusable packages should read RBNX_INSTANCE_NAME rather than
+# hard-coding an id).
+#
+# Fallback "orbbec_camera" preserves the previous single-instance
+# behaviour when the env var is not set (bare `python3 -m
+# orbbec_camera.main` or older rbnx-cli versions). Manifests that
+# only declare one instance can either use `- name: orbbec_camera`
+# (matches the fallback) or any other name (env var wins).
+_INSTANCE_ID = os.environ.get("RBNX_INSTANCE_NAME", "orbbec_camera")
+log.info("provider_id resolved to %r (RBNX_INSTANCE_NAME=%r)",
+         _INSTANCE_ID, os.environ.get("RBNX_INSTANCE_NAME"))
 orbbec_camera = Primitive(
-    id="orbbec_camera",
+    id=_INSTANCE_ID,
     namespace="robonix/primitive/camera",
 )
 
