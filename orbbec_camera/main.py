@@ -58,9 +58,26 @@ Driver(CMD_INIT, config_json)):
     depth_width         default 640
     depth_height        default 400
     depth_fps           default 10
-    serial_number       default ""
-    usb_port            default ""
+    serial_number       default ""     — pin to a specific device when
+                                          multiple Orbbecs are on the
+                                          same host. See
+                                          launch_config.device_selector_args
+                                          for parsing rules (empty /
+                                          whitespace == auto-discovery).
+    usb_port            default ""     — same, but keyed by USB bus
+                                          address (survives serial-less
+                                          dev kits).
     sentinel_timeout_s  default 30.0
+
+Multi-camera on one host:
+    Combine `RBNX_INSTANCE_NAME`-driven provider_ids (see above) with
+    per-instance `serial_number` / `usb_port` + distinct `camera_name`
+    to run e.g. a `front_camera` + an `arm_camera` off the same deploy
+    manifest without ROS-topic or atlas-id collisions. Only these two
+    selector keys are forwarded — DCW's `dabai_dcw.launch.py` does not
+    declare `device_preset`, so that Gemini-only key is explicitly
+    ignored (with a one-shot warning) instead of being silently
+    dropped. See orbbec_camera/launch_config.py for details.
 """
 from __future__ import annotations
 
@@ -74,6 +91,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from robonix_api import Primitive, Ok, Err
+
+from .launch_config import UNSUPPORTED_ON_DCW, device_selector_args
 
 logging.basicConfig(
     level=os.environ.get("ORBBEC_LOG_LEVEL", "INFO"),
@@ -109,11 +128,46 @@ _pkg_root: Path = Path(__file__).resolve().parent.parent
 _orbbec_proc: Optional[subprocess.Popen] = None
 _resolved_cfg: Optional[dict[str, Any]] = None
 
+# Track which "Gemini-only" config keys we have already warned about, so
+# a long-running instance doesn't spam the log on every re-activate. Set
+# semantics also mean a config change that removes and re-adds the bad
+# key will warn again (set is repopulated on each new key).
+_warned_unsupported_keys: set[str] = set()
+
 
 def _bool_arg(v: Any) -> str:
     """Coerce truthy Python values into the lowercase 'true'/'false'
     strings that ros2 launch consumes via DeclareLaunchArgument."""
     return "true" if bool(v) else "false"
+
+
+def _warn_unsupported_keys(cfg: dict) -> None:
+    """Loudly ignore config keys that only the Gemini 330 sister package
+    supports (currently: `device_preset`).
+
+    Rationale: the vertical-grasp deploy manifest is often copy-pasted
+    between the Gemini and DCW camera primitives. Silently dropping a
+    Gemini-only knob on DCW would look like the setting was applied,
+    when in fact the DCW driver never even sees it — the failure mode
+    is "camera comes up with default profile, operator wonders why the
+    preset had no effect". Warning once per key makes that drift loud.
+    """
+    for key in UNSUPPORTED_ON_DCW:
+        if key not in cfg:
+            continue
+        if cfg.get(key) in (None, "", "  "):
+            # Empty override — no user intent to actually set anything.
+            continue
+        if key in _warned_unsupported_keys:
+            continue
+        _warned_unsupported_keys.add(key)
+        log.warning(
+            "config key %r is Gemini-330-only and is IGNORED on Dabai DCW "
+            "(dabai_dcw.launch.py declares no such argument). "
+            "Value was: %r. Remove it from this instance's config to silence "
+            "this warning.",
+            key, cfg.get(key),
+        )
 
 
 def _spawn_orbbec(cfg: dict) -> None:
@@ -142,13 +196,24 @@ def _spawn_orbbec(cfg: dict) -> None:
         f"depth_height:={int(cfg.get('depth_height', 400))}",
         f"depth_fps:={int(cfg.get('depth_fps', 10))}",
     ]
-    # Optional pin-by-USB args — only forward when the user gave a
-    # non-empty value, otherwise let dabai_dcw.launch.py keep its
-    # defaults (empty == "any device").
-    if cfg.get("serial_number"):
-        args.append(f"serial_number:={cfg['serial_number']}")
-    if cfg.get("usb_port"):
-        args.append(f"usb_port:={cfg['usb_port']}")
+    # Optional pin-by-USB args (`serial_number`, `usb_port`). Only
+    # non-empty values are forwarded — empty / whitespace / missing
+    # falls back to the launch file's "any device" auto-discovery. The
+    # ordering is fixed (serial_number before usb_port) inside
+    # device_selector_args() so launch logs diff cleanly across deploys.
+    # See launch_config.py for the full contract, including why
+    # `device_preset` is intentionally not accepted here.
+    selectors = device_selector_args(cfg)
+    args.extend(selectors)
+    _warn_unsupported_keys(cfg)
+
+    # Log which device pinning path we actually took, once, at spawn
+    # time — cheap and disproportionately useful when triaging a
+    # "wrong camera came up" bug on a multi-Orbbec host.
+    if selectors:
+        log.info("orbbec device pinned via: %s", " ".join(selectors))
+    else:
+        log.info("orbbec device selection: auto-discovery (no serial_number / usb_port set)")
 
     log_path = _pkg_root / "rbnx-build" / "data" / "orbbec.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)

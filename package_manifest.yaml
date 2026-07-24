@@ -47,8 +47,18 @@
 #   depth_height        default 400
 #   depth_fps           default 10
 #   serial_number       default ""         — pin to specific device when multiple are connected
-#   usb_port            default ""
+#   usb_port            default ""         — same, keyed by USB bus address (survives serial-less kits)
 #   sentinel_timeout_s  default 30.0
+#
+# Multi-camera on one host:
+#   Combine `RBNX_INSTANCE_NAME`-driven provider_ids with per-instance
+#   `serial_number` / `usb_port` + distinct `camera_name` to run e.g. a
+#   `front_camera` + an `arm_camera` off the same deploy manifest without
+#   ROS-topic or atlas-id collisions. Only these two selector keys are
+#   forwarded — DCW's `dabai_dcw.launch.py` does not declare `device_preset`,
+#   so that Gemini-330-only key is explicitly ignored (with a one-shot
+#   warning) instead of being silently dropped. See
+#   orbbec_camera/launch_config.py for the full contract.
 #
 # Topic-name overrides (rarely needed, derive from camera_name otherwise):
 #   rgb_topic           default "/<camera_name>/color/image_raw"
